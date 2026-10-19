@@ -104,7 +104,7 @@ pipeline {
             }
         }
 
-        stage('Deploy Locally') {
+        stage('Deploy on AWS') {
             steps {
                 sh '''
                     set -eu
