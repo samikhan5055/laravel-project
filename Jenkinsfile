@@ -17,7 +17,12 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    composer install --no-interaction --prefer-dist --optimize-autoloader
+
+                    echo "Installing Composer dependencies..."
+                    composer install \
+                        --no-interaction \
+                        --prefer-dist \
+                        --optimize-autoloader
 
                     if [ ! -f .env ]; then
                         cp .env.example .env
@@ -37,6 +42,8 @@ pipeline {
                     fi
 
                     php artisan config:clear
+
+                    echo "Build completed."
                 '''
             }
         }
@@ -45,14 +52,20 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     export DB_CONNECTION=sqlite
                     export DB_DATABASE="$WORKSPACE/database/database.sqlite"
                     export SESSION_DRIVER=file
                     export CACHE_STORE=file
                     export QUEUE_CONNECTION=sync
 
+                    echo "Preparing test database..."
                     php artisan migrate --force
+
+                    echo "Running Laravel tests..."
                     php artisan test
+
+                    echo "All tests passed."
                 '''
             }
         }
@@ -62,11 +75,17 @@ pipeline {
                 sh '''
                     set -eu
 
+                    echo "Checking deployment directory..."
                     test -f "$DEPLOY_DIR/.env"
                     test -d "$DEPLOY_DIR/storage"
                     test -d "$DEPLOY_DIR/bootstrap/cache"
 
-                    rsync -a --delete \
+                    echo "Copying application files..."
+
+                    rsync -rlpt \
+                        --no-owner \
+                        --no-group \
+                        --delete \
                         --exclude='/.env' \
                         --exclude='/storage/' \
                         --exclude='/bootstrap/cache/' \
@@ -76,12 +95,19 @@ pipeline {
 
                     cd "$DEPLOY_DIR"
 
+                    echo "Clearing old Laravel caches..."
                     php artisan optimize:clear
+
+                    echo "Building production configuration cache..."
                     php artisan config:cache
                     php artisan route:cache
                     php artisan view:cache
 
-                    echo "Deployment files updated successfully."
+                    echo "Checking deployed Laravel application..."
+                    php artisan --version
+                    php artisan route:list --path=students
+
+                    echo "Deployment completed successfully."
                 '''
             }
         }
@@ -89,11 +115,11 @@ pipeline {
 
     post {
         success {
-            echo 'Build, tests, and deployment completed successfully.'
+            echo 'SUCCESS: Build, tests, and EC2 deployment completed.'
         }
 
         failure {
-            echo 'Pipeline failed. Check the stage console output.'
+            echo 'FAILURE: Check the Console Output for the failed stage.'
         }
 
         always {
@@ -101,3 +127,4 @@ pipeline {
         }
     }
 }
+
