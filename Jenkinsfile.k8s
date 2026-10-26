@@ -1,0 +1,115 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_USER = 'sami1800'
+        K8S_NAMESPACE = 'laravel-k8s'
+        KUBECONFIG_PATH = '/root/.kube/config'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Validate Kubernetes') {
+            steps {
+                sh '''
+                    sudo /usr/local/bin/kubectl \
+                      --kubeconfig="$KUBECONFIG_PATH" \
+                      get nodes
+
+                    sudo /usr/local/bin/kubectl \
+                      --kubeconfig="$KUBECONFIG_PATH" \
+                      get deployments -n "$K8S_NAMESPACE"
+                '''
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                sh '''
+                    sudo /usr/bin/docker build \
+                      --target app \
+                      -t "$DOCKERHUB_USER/laravel-app:$BUILD_NUMBER" .
+
+                    sudo /usr/bin/docker build \
+                      --target web-k8s \
+                      -t "$DOCKERHUB_USER/laravel-web:$BUILD_NUMBER" .
+                '''
+            }
+        }
+
+        stage('Push Docker Images') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        printf '%s' "$DOCKER_PASS" |
+                          sudo /usr/bin/docker login \
+                            --username "$DOCKER_USER" \
+                            --password-stdin
+
+                        sudo /usr/bin/docker push \
+                          "$DOCKERHUB_USER/laravel-app:$BUILD_NUMBER"
+
+                        sudo /usr/bin/docker push \
+                          "$DOCKERHUB_USER/laravel-web:$BUILD_NUMBER"
+
+                        sudo /usr/bin/docker logout
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    KUBECTL="sudo /usr/local/bin/kubectl --kubeconfig=$KUBECONFIG_PATH"
+
+                    $KUBECTL apply -f k8s/nginx.yaml
+
+                    $KUBECTL set image \
+                      deployment/laravel \
+                      laravel="$DOCKERHUB_USER/laravel-app:$BUILD_NUMBER" \
+                      -n "$K8S_NAMESPACE"
+
+                    $KUBECTL set image \
+                      deployment/laravel-web \
+                      nginx="$DOCKERHUB_USER/laravel-web:$BUILD_NUMBER" \
+                      -n "$K8S_NAMESPACE"
+
+                    $KUBECTL rollout status \
+                      deployment/laravel \
+                      -n "$K8S_NAMESPACE" \
+                      --timeout=180s
+
+                    $KUBECTL rollout status \
+                      deployment/laravel-web \
+                      -n "$K8S_NAMESPACE" \
+                      --timeout=180s
+
+                    $KUBECTL get deployments,services,pods \
+                      -n "$K8S_NAMESPACE" -o wide
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Laravel deployment pipeline completed successfully.'
+        }
+        failure {
+            echo 'Pipeline failed. Check the failed stage and Jenkins console output.'
+        }
+    }
+}

@@ -43,3 +43,10 @@ COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=app /var/www/html/public/ /var/www/html/public/
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
+
+# Kubernetes-specific Nginx image.
+FROM nginx:alpine AS web-k8s
+COPY k8s/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=app /var/www/html/public/ /var/www/html/public/
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
